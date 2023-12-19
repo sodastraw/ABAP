@@ -1,0 +1,934 @@
+*&---------------------------------------------------------------------*
+*& Include          ZENCO041_MDL
+*&---------------------------------------------------------------------*
+CLASS lcl_scrap_consumption DEFINITION.
+
+  PUBLIC SECTION.
+
+    TYPES:
+      BEGIN OF ty_scrap_consumption,
+        matnr1 TYPE acdoca-matnr,
+        aufnr  TYPE acdoca-aufnr,
+        werks1 TYPE acdoca-werks,
+        racct  TYPE acdoca-racct,
+        matnr2 TYPE acdoca-matnr,
+        werks2 TYPE acdoca-werks,
+        rcntr  TYPE acdoca-rcntr,
+        hsl0l  TYPE acdoca-hsl,
+        ksl0l  TYPE acdoca-ksl,
+        kslgr  TYPE acdoca-ksl,
+        rhcur  TYPE acdoca-rhcur,
+        rkcur  TYPE acdoca-rkcur,
+      END OF ty_scrap_consumption.
+
+    TYPES tt_scrap_consumptions TYPE STANDARD TABLE OF ty_scrap_consumption WITH EMPTY KEY.
+
+    TYPES:
+      BEGIN OF ty_pop_up_data,
+        item   TYPE bseg-buzei,
+        aufnr  TYPE acdoca-aufnr,
+        status TYPE bapiret2-message,
+
+      END OF ty_pop_up_data.
+    TYPES tt_popup_data TYPE STANDARD TABLE OF ty_pop_up_data WITH EMPTY KEY.
+
+    METHODS distribute_scrap_consumption
+      IMPORTING
+        fiscal_year  TYPE acdoca-gjahr
+        period       TYPE acdoca-poper
+        company      TYPE acdoca-rbukrs
+        plants       TYPE t_range_werks
+        posting_date TYPE acdoca-budat
+        program_id   TYPE sy-repid .
+
+
+
+    METHODS post_distribution.
+
+    METHODS get_scrap_consumption_table
+      RETURNING VALUE(scrap_consumptions) TYPE tt_scrap_consumptions.
+
+    METHODS get_popup_table
+      RETURNING VALUE(popup_table) TYPE tt_popup_data.
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+
+    CONSTANTS:
+      cns_setname_filter           TYPE ztca_varv-zname VALUE 'SETNAME',
+      cns_setclass_filter          TYPE ztca_varv-zname VALUE 'SETCLASS',
+      cns_material_type_filter     TYPE ztca_varv-zname VALUE 'MTART',
+      cns_object_type_filter       TYPE ztca_varv-zname VALUE 'ACCASTY',
+      cns_order_category_filter    TYPE ztca_varv-zname VALUE 'AUTYP',
+      cns_ledger_filter            TYPE ztca_varv-zname VALUE 'RLDNR',
+      cns_doctype_scrap_allocation TYPE bkpf-blart VALUE 'HR',
+      cns_header_text              TYPE bkpf-bktxt VALUE 'SCRAP STD DIST',
+      cns_valuated_scrap           TYPE mara-mtart VALUE 'ZSCV',
+      cns_finished_product         TYPE mara-mtart VALUE 'FERT',
+      cns_default_account          TYPE acdoca-racct VALUE '6200000020',
+      cns_account_filter           TYPE rollname VALUE 'GL_ACCOUNT',
+
+
+      BEGIN OF cns_ledger_type,
+        lead  TYPE acdoca-rldnr VALUE '0L',
+        group TYPE acdoca-rldnr VALUE 'GR',
+      END OF cns_ledger_type,
+
+      BEGIN OF cns_message_type,
+        error   TYPE c   VALUE 'E',
+        success TYPE c   VALUE 'S',
+        info    TYPE c   VALUE 'I',
+      END OF cns_message_type,
+
+      BEGIN OF cns_lights,
+        red    TYPE c   VALUE '1',
+        yellow TYPE c   VALUE '2',
+        green  TYPE c   VALUE '3',
+      END OF cns_lights.
+
+    TYPES:
+      BEGIN OF ty_scrap_cost,
+        rldnr TYPE acdoca-rldnr,
+        racct TYPE acdoca-racct,
+        awref TYPE acdoca-awref,
+        matnr TYPE acdoca-matnr,
+        mtart TYPE mara-mtart,
+        rcntr TYPE acdoca-rcntr,
+        werks TYPE acdoca-werks,
+        budat TYPE acdoca-budat,
+        hsl   TYPE acdoca-hsl,
+        ksl   TYPE acdoca-ksl,
+        rhcur TYPE acdoca-rhcur,
+        rkcur TYPE acdoca-rkcur,
+
+      END OF ty_scrap_cost.
+    TYPES tt_scrap_cost TYPE STANDARD TABLE OF ty_scrap_cost WITH EMPTY KEY.
+
+    TYPES:
+      BEGIN OF ty_order_cost,
+        aufnr TYPE aufk-aufnr,
+        rldnr TYPE acdoca-rldnr,
+        racct TYPE acdoca-racct,
+        awref TYPE acdoca-awref,
+        matnr TYPE acdoca-matnr,
+        mtart TYPE mara-mtart,
+        rcntr TYPE acdoca-rcntr,
+        werks TYPE acdoca-werks,
+        budat TYPE acdoca-budat,
+        hsl   TYPE acdoca-hsl,
+        ksl   TYPE acdoca-ksl,
+        rhcur TYPE acdoca-rhcur,
+        rkcur TYPE acdoca-rkcur,
+      END OF ty_order_cost.
+    TYPES tt_order_cost TYPE STANDARD TABLE OF ty_order_cost WITH EMPTY KEY.
+
+
+    TYPES tt_accountgl TYPE TABLE OF bapiacgl09 WITH EMPTY KEY.
+    TYPES tt_currencyamount TYPE TABLE OF bapiaccr09 WITH EMPTY KEY.
+
+    DATA accountgl    TYPE tt_accountgl.
+    DATA currencyamount TYPE tt_currencyamount.
+    DATA return_messages TYPE STANDARD TABLE OF bapiret2.
+    DATA return_message TYPE bapiret2.
+    DATA fiscal_year  TYPE acdoca-gjahr .
+    DATA period       TYPE acdoca-poper .
+    DATA company      TYPE acdoca-rbukrs .
+    DATA plants       TYPE t_range_werks .
+    DATA posting_date TYPE acdoca-budat .
+    DATA program_id   TYPE sy-repid .
+
+    DATA scrap_costs       TYPE tt_scrap_cost.
+    DATA lead_scrap_costs  TYPE tt_scrap_cost.
+    DATA group_scrap_costs TYPE tt_scrap_cost.
+
+    DATA order_costs                  TYPE tt_order_cost.
+    DATA finished_product_order_costs TYPE tt_order_cost.
+    DATA lead_order_costs             TYPE tt_order_cost.
+    DATA group_order_costs            TYPE tt_order_cost.
+    DATA lead_finprod_order_costs     TYPE tt_order_cost.
+    DATA group_finprod_order_costs    TYPE tt_order_cost.
+
+    DATA scrap_consumptions TYPE STANDARD TABLE OF ty_scrap_consumption.
+    DATA company_currency_total TYPE acdoca-hsl.
+    DATA global_currency_total TYPE acdoca-ksl.
+    DATA fixed_values          TYPE STANDARD TABLE OF ztca_varv.
+
+
+    DATA setname_filter        TYPE RANGE OF setleaf-setname.
+    DATA setclass_filter       TYPE RANGE OF setleaf-setclass.
+    DATA material_type_filter  TYPE RANGE OF mara-mtart.
+    DATA object_type_filter    TYPE RANGE OF acdoca-accasty.
+    DATA order_category_filter TYPE RANGE OF acdoca-autyp.
+    DATA account_filter        TYPE RANGE OF acdoca-racct.
+    DATA ledger_filter         TYPE RANGE OF fins_ledger.
+
+    DATA popup TYPE tt_popup_data.
+
+
+
+    METHODS select_fixed_values .
+    METHODS select_scrap_cost.
+    METHODS select_order.
+    METHODS select_finished_product_order.
+    METHODS lessen_orders.
+
+
+    METHODS read_material_comp_curr_total
+      IMPORTING ledger                        TYPE acdoca-rldnr
+                material                      TYPE acdoca-matnr
+      RETURNING VALUE(company_currency_total) TYPE acdoca-hsl.
+
+    METHODS read_material_glbl_curr_total
+      IMPORTING ledger                       TYPE acdoca-rldnr
+                material                     TYPE acdoca-matnr
+      RETURNING VALUE(global_currency_total) TYPE acdoca-ksl.
+
+    METHODS read_order_comp_curr_total
+      IMPORTING ledger                        TYPE acdoca-rldnr
+      RETURNING VALUE(company_currency_total) TYPE acdoca-hsl.
+
+    METHODS read_order_glbl_curr_total
+      IMPORTING ledger                       TYPE acdoca-rldnr
+      RETURNING VALUE(global_currency_total) TYPE acdoca-ksl.
+
+    METHODS process_valuated_scrap
+      CHANGING scrap_costs TYPE tt_scrap_cost.
+
+    METHODS distribute_scrap_cost
+      IMPORTING ledger_scrap_costs  TYPE tt_scrap_cost
+                order_costs         TYPE tt_order_cost
+                finprod_order_costs TYPE tt_order_cost.
+
+    METHODS create_ledger_order_cost_table
+      IMPORTING ledger                    TYPE acdoca-rldnr
+                order_costs               TYPE tt_order_cost
+      RETURNING VALUE(ledger_order_costs) TYPE tt_order_cost.
+
+    METHODS create_ledger_scrap_cost_table
+      IMPORTING ledger                    TYPE acdoca-rldnr
+      RETURNING VALUE(ledger_scrap_costs) TYPE tt_scrap_cost.
+
+    METHODS get_number_of_ledgers
+      RETURNING VALUE(count) TYPE i .
+
+
+ENDCLASS.
+
+
+CLASS lcl_scrap_consumption IMPLEMENTATION.
+
+  METHOD get_popup_table.
+    popup_table = popup.
+  ENDMETHOD.
+
+  METHOD distribute_scrap_consumption.
+
+    me->fiscal_year  = fiscal_year.
+    me->period       = period.
+    me->company      = company.
+    me->plants       = plants[].
+    me->posting_date = posting_date.
+    me->program_id   = program_id.
+
+    select_fixed_values( ).
+    select_scrap_cost( ).
+    select_order( ).
+    select_finished_product_order( ).
+    lessen_orders( ).
+
+    DO get_number_of_ledgers( ) TIMES.
+
+      DATA(ledger) = ledger_filter[ sy-index ]-low.
+      DATA(ledger_scrap_costs) = create_ledger_scrap_cost_table( ledger ).
+
+      DATA(ledger_order_costs) = create_ledger_order_cost_table(
+                                    ledger = ledger
+                                    order_costs = order_costs ).
+
+      DATA(ledger_finprod_order_cost) = create_ledger_order_cost_table(
+                                              ledger = ledger
+                                              order_costs = finished_product_order_costs ).
+
+*     if in future number of ledger increase just add it here
+      CASE ledger.
+
+        WHEN cns_ledger_type-lead.
+
+          lead_scrap_costs = ledger_scrap_costs.
+          lead_order_costs = ledger_order_costs.
+          lead_finprod_order_costs = ledger_finprod_order_cost.
+
+          process_valuated_scrap( CHANGING scrap_costs = lead_scrap_costs ).
+
+          distribute_scrap_cost( ledger_scrap_costs  = lead_scrap_costs
+                                 order_costs         = lead_order_costs
+                                 finprod_order_costs = lead_finprod_order_costs ).
+
+        WHEN cns_ledger_type-group.
+
+          group_scrap_costs = ledger_scrap_costs.
+          group_order_costs = ledger_order_costs.
+          group_finprod_order_costs = ledger_finprod_order_cost.
+          process_valuated_scrap( CHANGING scrap_costs = group_scrap_costs ).
+
+          distribute_scrap_cost( ledger_scrap_costs  = group_scrap_costs
+                                 order_costs         = group_order_costs
+                                 finprod_order_costs = group_finprod_order_costs ).
+
+        WHEN OTHERS.
+
+      ENDCASE.
+
+    ENDDO.
+
+  ENDMETHOD.
+
+  METHOD select_scrap_cost.
+
+    SELECT acdoca~rldnr,
+           acdoca~racct,
+           acdoca~awref,
+           acdoca~matnr,
+           mara~mtart,
+           acdoca~rcntr,
+           acdoca~werks,
+           acdoca~budat,
+           acdoca~hsl,
+           acdoca~ksl,
+           acdoca~rhcur,
+           acdoca~rkcur
+      FROM acdoca AS acdoca
+      INNER JOIN matdoc AS matdoc
+        ON acdoca~awref EQ matdoc~mblnr
+       AND acdoca~gjahr EQ matdoc~gjahr
+      LEFT OUTER JOIN mara AS mara
+        ON acdoca~matnr EQ mara~matnr
+     WHERE rldnr        IN @ledger_filter
+       AND rbukrs       EQ @company
+       AND acdoca~gjahr EQ @fiscal_year
+       AND xreversing   EQ @abap_false
+       AND xreversed    EQ @abap_false
+       AND racct        IN @account_filter
+       AND poper        EQ @period
+       AND acdoca~budat EQ @posting_date
+       AND acdoca~werks IN @plants
+      INTO TABLE @scrap_costs.
+
+
+  ENDMETHOD.
+
+  METHOD create_ledger_scrap_cost_table.
+
+    ledger_scrap_costs = VALUE tt_scrap_cost( FOR scrap_cost IN scrap_costs
+                                      WHERE ( rldnr = ledger )
+                                      ( scrap_cost ) ).
+
+  ENDMETHOD.
+
+  METHOD create_ledger_order_cost_table.
+
+    ledger_order_costs = VALUE tt_order_cost( FOR order_cost IN order_costs
+                                      WHERE ( rldnr = ledger )
+                                      ( order_cost ) ).
+
+
+  ENDMETHOD.
+
+
+  METHOD process_valuated_scrap .
+
+    DATA reference_filter_zscv TYPE RANGE OF awref.
+    DATA reference_filter      TYPE RANGE OF awref.
+    DATA scrap_costs_totals     TYPE STANDARD TABLE OF ty_scrap_cost.
+
+    DATA(valuated_scraps) = scrap_costs.
+
+    DELETE valuated_scraps WHERE mtart NE cns_valuated_scrap.
+
+    SORT valuated_scraps BY awref ASCENDING.
+
+    DELETE ADJACENT DUPLICATES FROM valuated_scraps COMPARING awref.
+
+
+    LOOP AT valuated_scraps INTO DATA(valuated_scrap).
+
+      DATA(ctr) = 0.
+
+      LOOP AT scrap_costs INTO DATA(scrap_cost) WHERE awref EQ valuated_scrap-awref
+                                                  AND mtart NE cns_valuated_scrap.
+
+        ctr += 1.
+        IF ctr GT 1.
+
+          APPEND INITIAL LINE TO reference_filter ASSIGNING FIELD-SYMBOL(<ref_filter>).
+          <ref_filter>-sign   = 'I'.
+          <ref_filter>-option = 'EQ'.
+          <ref_filter>-low    = scrap_cost-awref.
+
+          EXIT.
+        ENDIF.
+
+      ENDLOOP.
+
+    ENDLOOP.
+
+    LOOP AT scrap_costs ASSIGNING FIELD-SYMBOL(<scrap_cost>) WHERE awref IN reference_filter
+                                                               AND mtart EQ cns_valuated_scrap.
+      CLEAR <scrap_cost>-matnr.
+    ENDLOOP.
+
+
+
+    DATA(temp_scrap_costs) = scrap_costs.
+
+    LOOP AT temp_scrap_costs ASSIGNING <scrap_cost> WHERE awref IN reference_filter.
+      IF <scrap_cost>-mtart EQ cns_valuated_scrap.
+        CLEAR <scrap_cost>-mtart.
+      ENDIF.
+
+      CLEAR <scrap_cost>-awref.
+
+      COLLECT <scrap_cost> INTO scrap_costs_totals.
+
+    ENDLOOP.
+
+    REFRESH scrap_costs.
+
+    scrap_costs = scrap_costs_totals.
+
+    SORT scrap_costs BY matnr ASCENDING.
+
+
+  ENDMETHOD.
+
+  METHOD select_order.
+
+    DATA materials TYPE RANGE OF matnr.
+
+    materials = VALUE #( FOR scrap_cost IN scrap_costs
+                           sign   = 'I'
+                           option = 'EQ'
+                         ( low = scrap_cost-matnr ) ).
+
+    SELECT acdoca~aufnr,
+           acdoca~rldnr,
+           acdoca~racct,
+           acdoca~awref,
+           acdoca~matnr,
+           mara~mtart,
+           acdoca~rcntr,
+           acdoca~werks,
+           acdoca~budat,
+           acdoca~hsl,
+           acdoca~ksl,
+           acdoca~rhcur,
+           acdoca~rkcur
+      FROM acdoca AS acdoca
+     INNER JOIN mara AS mara
+        ON acdoca~matnr EQ mara~matnr
+     INNER JOIN aufk AS aufk
+        ON acdoca~aufnr EQ aufk~aufnr
+     WHERE rldnr        IN @ledger_filter
+       AND rbukrs       EQ @company
+       AND acdoca~gjahr EQ @fiscal_year
+       AND poper        EQ @period
+       AND acdoca~werks IN @plants
+       AND accasty      IN @object_type_filter
+       AND acdoca~autyp IN @order_category_filter
+       AND acdoca~matnr IN @materials
+       AND aufk~idat2   IS NOT INITIAL
+      INTO TABLE @order_costs.
+
+
+  ENDMETHOD.
+
+  METHOD select_finished_product_order.
+
+    SELECT acdoca~aufnr,
+           acdoca~rldnr,
+           acdoca~racct,
+           acdoca~awref,
+           acdoca~matnr,
+           mara~mtart,
+           acdoca~rcntr,
+           acdoca~werks,
+           acdoca~budat,
+           acdoca~hsl,
+           acdoca~ksl,
+           acdoca~rhcur,
+           acdoca~rkcur
+      FROM acdoca AS acdoca
+     INNER JOIN mara AS mara
+        ON acdoca~matnr EQ mara~matnr
+     INNER JOIN aufk AS aufk
+        ON acdoca~aufnr EQ aufk~aufnr
+       FOR ALL ENTRIES  IN @order_costs
+     WHERE rldnr        IN @ledger_filter
+       AND rbukrs       EQ @company
+       AND acdoca~gjahr EQ @fiscal_year
+       AND poper        EQ @period
+       AND acdoca~werks IN @plants
+       AND accasty      IN @object_type_filter
+       AND acdoca~autyp IN @order_category_filter
+       AND acdoca~aufnr EQ @order_costs-aufnr
+       AND mara~mtart   EQ @cns_finished_product
+       AND aufk~idat2   IS NOT INITIAL
+      INTO TABLE @finished_product_order_costs.
+
+*    SORT order_costs BY aufnr ASCENDING.
+
+
+  ENDMETHOD.
+
+  METHOD lessen_orders.
+
+    DATA order_filter TYPE RANGE OF aufnr.
+
+    DATA(temp_finprod_order_costs) = finished_product_order_costs.
+    SORT temp_finprod_order_costs DESCENDING BY aufnr.
+    DELETE ADJACENT DUPLICATES FROM temp_finprod_order_costs COMPARING aufnr.
+
+    order_filter = VALUE #( FOR order_cost IN temp_finprod_order_costs
+                             sign = 'I'
+                             option = 'EQ'
+                             ( low = order_cost-aufnr )
+                           ).
+
+    DELETE order_costs WHERE aufnr NOT IN order_filter.
+
+  ENDMETHOD.
+
+  METHOD get_scrap_consumption_table.
+    scrap_consumptions = me->scrap_consumptions.
+  ENDMETHOD.
+
+  METHOD post_distribution.
+
+    DATA obj_type TYPE  bapiache09-obj_type.
+    DATA obj_key  TYPE  bapiache09-obj_key.
+    DATA obj_sys  TYPE  bapiache09-obj_sys.
+
+
+    DATA lv_item TYPE i.
+    DATA lv_count TYPE i.
+    REFRESH popup.
+
+    DATA(documentheader) =  VALUE bapiache09( doc_type   = cns_doctype_scrap_allocation
+                                              comp_code  = company
+                                              doc_date   = posting_date
+                                              pstng_date = posting_date
+                                              header_txt = cns_header_text
+                                              username = sy-uname ).
+
+    LOOP AT scrap_consumptions ASSIGNING FIELD-SYMBOL(<scrap_consumption>).
+      lv_count += 1.
+      lv_item += 1.
+
+      IF <scrap_consumption>-hsl0l GT 0.
+        DATA(gl_account) = VALUE racct( fixed_values[ zname = cns_account_filter ]-zlow DEFAULT cns_default_account ).
+        DATA(order) = <scrap_consumption>-aufnr.
+      ELSE.
+        gl_account = <scrap_consumption>-racct.
+        DATA(cost_center) = <scrap_consumption>-rcntr.
+      ENDIF.
+
+      DATA(amount) = <scrap_consumption>-hsl0l.
+
+      accountgl = VALUE tt_accountgl( BASE accountgl
+                  ( itemno_acc = lv_item
+                    gl_account = gl_account
+                    orderid    = order
+                    costcenter = cost_center
+                    item_text  = <scrap_consumption>-matnr1
+                    material   = <scrap_consumption>-matnr2
+                    pstng_date = posting_date ) ).
+
+
+      currencyamount = VALUE tt_currencyamount( BASE currencyamount
+                       ( itemno_acc = lv_item
+                         currency = <scrap_consumption>-rhcur
+                         amt_doccur = amount ) ).
+      CLEAR:
+        gl_account,
+        order,
+        cost_center.
+
+
+      lv_item += 1.
+
+      IF <scrap_consumption>-hsl0l GT 0.
+        gl_account = <scrap_consumption>-racct.
+        cost_center = <scrap_consumption>-rcntr.
+        CLEAR order.
+      ELSE.
+        gl_account = VALUE racct( fixed_values[ zname = cns_account_filter ]-zlow DEFAULT cns_default_account ).
+        CLEAR cost_center.
+        order = <scrap_consumption>-aufnr.
+      ENDIF.
+
+      amount *= -1. "to balance posting
+
+      accountgl = VALUE tt_accountgl( BASE accountgl
+                  ( itemno_acc = lv_item
+                    gl_account = gl_account
+                    orderid    = order
+                    costcenter = cost_center
+                    item_text  = <scrap_consumption>-matnr1
+                    material   = <scrap_consumption>-matnr2
+                    pstng_date = posting_date ) ).
+
+      currencyamount = VALUE tt_currencyamount( BASE currencyamount
+                       ( itemno_acc = lv_item
+                         currency = <scrap_consumption>-rhcur
+                         amt_doccur = amount ) ).
+
+
+      CALL FUNCTION 'BAPI_ACC_DOCUMENT_POST'
+        EXPORTING
+          documentheader = documentheader
+        IMPORTING
+          obj_type       = obj_type
+          obj_key        = obj_key
+          obj_sys        = obj_sys
+        TABLES
+          accountgl      = accountgl
+          currencyamount = currencyamount
+          return         = return_messages.
+
+      READ TABLE return_messages WITH KEY type = cns_message_type-error INTO return_message.
+      IF sy-subrc NE 0.
+
+        CLEAR return_message.
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          IMPORTING
+            return = return_message.
+
+        APPEND INITIAL LINE TO popup ASSIGNING FIELD-SYMBOL(<popup>).
+        <popup>-item = lv_count.
+        <popup>-aufnr = <scrap_consumption>-aufnr.
+        <popup>-status = |Document { obj_key+0(10) } created|.
+
+      ELSE.
+
+        APPEND INITIAL LINE TO popup ASSIGNING <popup>.
+        <popup>-item = lv_count.
+        <popup>-aufnr = <scrap_consumption>-aufnr.
+        <popup>-status = return_message-message.
+
+        CLEAR return_message.
+        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'
+          IMPORTING
+            return = return_message.
+
+
+      ENDIF.
+
+      CLEAR:
+        gl_account,
+        order,
+        cost_center,
+        return_message.
+
+      REFRESH:
+        accountgl,
+        currencyamount,
+        return_messages.
+
+      lv_item = 0.
+
+
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD get_number_of_ledgers.
+    count = lines( ledger_filter ).
+  ENDMETHOD.
+
+  METHOD distribute_scrap_cost.
+
+**  process cost with material first
+    LOOP AT ledger_scrap_costs INTO DATA(ledger_scrap_cost) WHERE matnr IS NOT INITIAL.
+
+      LOOP AT order_costs INTO DATA(order_cost) WHERE matnr EQ ledger_scrap_cost-matnr.
+        DATA(scrap_consumption) = VALUE ty_scrap_consumption( ).
+
+        READ TABLE finprod_order_costs INTO DATA(finprod_order_cost) WITH KEY aufnr = order_cost-aufnr.
+
+        scrap_consumption-matnr1 = finprod_order_cost-matnr.
+        scrap_consumption-aufnr  = order_cost-aufnr.
+        scrap_consumption-werks1 = order_cost-werks.
+        scrap_consumption-racct  = ledger_scrap_cost-racct.
+        scrap_consumption-matnr2 = ledger_scrap_cost-matnr.
+        scrap_consumption-werks2 = ledger_scrap_cost-werks.
+        scrap_consumption-rcntr  = ledger_scrap_cost-rcntr.
+
+        CASE ledger_scrap_cost-rldnr.
+          WHEN cns_ledger_type-lead.
+            scrap_consumption-hsl0l  = ledger_scrap_cost-hsl
+            * order_cost-hsl
+            / read_material_comp_curr_total( ledger = ledger_scrap_cost-rldnr
+            material = ledger_scrap_cost-matnr ).
+
+            scrap_consumption-ksl0l  = ledger_scrap_cost-ksl
+            * order_cost-ksl
+            / read_material_comp_curr_total( ledger = ledger_scrap_cost-rldnr
+            material = ledger_scrap_cost-matnr ).
+
+
+
+          WHEN cns_ledger_type-group.
+
+            scrap_consumption-kslgr = ledger_scrap_cost-ksl
+            * order_cost-ksl
+            / read_material_glbl_curr_total( ledger = ledger_scrap_cost-rldnr
+            material = ledger_scrap_cost-matnr ).
+
+
+          WHEN OTHERS.
+        ENDCASE.
+
+        scrap_consumption-rhcur = ledger_scrap_cost-rhcur.
+        scrap_consumption-rkcur = ledger_scrap_cost-rkcur.
+
+        COLLECT scrap_consumption INTO scrap_consumptions.
+        CLEAR:
+        scrap_consumption,
+        order_cost,
+        finprod_order_cost.
+
+
+      ENDLOOP.
+
+      CLEAR ledger_scrap_cost.
+
+    ENDLOOP.
+
+
+**  process cost without materials
+    LOOP AT ledger_scrap_costs INTO ledger_scrap_cost WHERE matnr IS INITIAL.
+
+      LOOP AT finprod_order_costs INTO finprod_order_cost.
+
+        scrap_consumption-matnr1 = finprod_order_cost-matnr.
+        scrap_consumption-aufnr  = finprod_order_cost-aufnr.
+        scrap_consumption-werks1 = finprod_order_cost-werks.
+        scrap_consumption-racct  = ledger_scrap_cost-racct.
+*        scrap_consumption-matnr2 = ledger_scrap_cost-matnr.
+*        scrap_consumption-werks2 = ledger_scrap_cost-werks.
+        scrap_consumption-rcntr  = ledger_scrap_cost-rcntr.
+
+
+        CASE ledger_scrap_cost-rldnr.
+          WHEN cns_ledger_type-lead.
+            scrap_consumption-hsl0l  = ledger_scrap_cost-hsl
+            * finprod_order_cost-hsl
+            / read_order_comp_curr_total( ledger_scrap_cost-rldnr ).
+
+            scrap_consumption-ksl0l  = ledger_scrap_cost-ksl
+            * finprod_order_cost-ksl
+            / read_order_comp_curr_total( ledger_scrap_cost-rldnr ).
+
+
+
+          WHEN cns_ledger_type-group.
+
+            scrap_consumption-kslgr = ledger_scrap_cost-ksl
+            * finprod_order_cost-ksl
+            / read_order_glbl_curr_total( ledger_scrap_cost-rldnr ).
+
+
+
+          WHEN OTHERS.
+        ENDCASE.
+
+        scrap_consumption-rhcur = ledger_scrap_cost-rhcur.
+        scrap_consumption-rkcur = ledger_scrap_cost-rkcur.
+
+        COLLECT scrap_consumption INTO scrap_consumptions.
+
+        CLEAR:
+        scrap_consumption,
+        finprod_order_cost.
+
+
+      ENDLOOP.
+      CLEAR ledger_scrap_cost.
+
+    ENDLOOP.
+
+
+
+  ENDMETHOD.
+
+  METHOD read_material_comp_curr_total.
+    CASE ledger.
+      WHEN cns_ledger_type-lead.
+
+        company_currency_total  = REDUCE fins_vhcur12( INIT company_currency TYPE fins_vhcur12
+                                  FOR lead_order_cost IN lead_order_costs
+                                  WHERE ( matnr EQ material )
+                                  NEXT company_currency = company_currency
+                                  + lead_order_cost-hsl ).
+
+      WHEN cns_ledger_type-group.
+
+        company_currency_total  = REDUCE fins_vhcur12( INIT company_currency TYPE fins_vhcur12
+                                  FOR group_order_cost IN group_order_costs
+                                  WHERE ( matnr EQ material )
+                                  NEXT company_currency = company_currency
+                                  + group_order_cost-hsl ).
+
+
+      WHEN OTHERS.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD read_material_glbl_curr_total.
+    CASE ledger.
+      WHEN cns_ledger_type-lead.
+
+        global_currency_total  = REDUCE fins_vhcur12(
+                                 INIT company_currency TYPE fins_vhcur12
+                                 FOR lead_order_cost IN lead_order_costs
+                                 WHERE ( matnr EQ material )
+                                 NEXT company_currency = company_currency
+                                                       + lead_order_cost-ksl ).
+
+
+      WHEN cns_ledger_type-group.
+
+        global_currency_total  = REDUCE fins_vhcur12(
+                                  INIT company_currency TYPE fins_vhcur12
+                                  FOR group_order_cost IN group_order_costs
+                                  WHERE ( matnr EQ material )
+                                  NEXT company_currency = company_currency
+                                  + group_order_cost-ksl ).
+
+      WHEN OTHERS.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD read_order_comp_curr_total.
+    CASE ledger.
+      WHEN cns_ledger_type-lead.
+
+*lead_finprod_order_costs
+*group_finprod_order_costs
+
+        company_currency_total  = REDUCE fins_vhcur12(
+                                  INIT company_currency TYPE fins_vhcur12
+                                  FOR lead_finprod_order_cost IN lead_finprod_order_costs
+                                  NEXT company_currency = company_currency
+                                  + lead_finprod_order_cost-hsl ).
+
+      WHEN cns_ledger_type-group.
+
+        company_currency_total  = REDUCE fins_vhcur12(
+                                  INIT company_currency TYPE fins_vhcur12
+                                  FOR group_finprod_order_cost IN group_finprod_order_costs
+                                  NEXT company_currency = company_currency
+                                  + group_finprod_order_cost-hsl ).
+
+
+      WHEN OTHERS.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD read_order_glbl_curr_total.
+    CASE ledger.
+      WHEN cns_ledger_type-lead.
+
+        global_currency_total  = REDUCE fins_vhcur12(
+                                  INIT company_currency TYPE fins_vhcur12
+                                  FOR lead_finprod_order_cost IN lead_finprod_order_costs
+                                  NEXT company_currency = company_currency
+                                  + lead_finprod_order_cost-ksl ).
+
+
+
+      WHEN cns_ledger_type-group.
+
+        global_currency_total  = REDUCE fins_vhcur12(
+                                  INIT company_currency TYPE fins_vhcur12
+                                  FOR group_finprod_order_cost IN group_finprod_order_costs
+                                  NEXT company_currency = company_currency
+                                  + group_finprod_order_cost-ksl ).
+
+
+      WHEN OTHERS.
+    ENDCASE.
+  ENDMETHOD.
+  METHOD select_fixed_values.
+
+    SELECT *
+    FROM ztca_varv
+    WHERE zprog EQ @program_id
+    INTO TABLE @fixed_values.
+
+*     create filters from fixed value.
+    IF sy-subrc EQ 0.
+
+      ledger_filter = VALUE #( FOR fixed_value IN fixed_values
+                      WHERE ( zname = cns_ledger_filter )
+                      sign = fixed_value-zsign
+                      option = fixed_value-zopti
+                      ( low = fixed_value-zlow )
+                      ).
+
+      setname_filter = VALUE #( FOR fixed_value IN fixed_values
+                        WHERE ( zname = cns_setname_filter )
+                        sign = fixed_value-zsign
+                        option = fixed_value-zopti
+                        ( low = fixed_value-zlow )
+                        ).
+
+      setclass_filter = VALUE #( FOR fixed_value IN fixed_values
+                          WHERE ( zname = cns_setclass_filter )
+                          sign = fixed_value-zsign
+                          option = fixed_value-zopti
+                          ( low = fixed_value-zlow )
+                          ).
+
+      material_type_filter = VALUE #( FOR fixed_value IN fixed_values
+                              WHERE ( zname = cns_material_type_filter )
+                              sign = fixed_value-zsign
+                              option = fixed_value-zopti
+                              ( low = fixed_value-zlow )
+                              ).
+
+      object_type_filter = VALUE #( FOR fixed_value IN fixed_values
+                            WHERE ( zname = cns_object_type_filter )
+                            sign = fixed_value-zsign
+                            option = fixed_value-zopti
+                            ( low = fixed_value-zlow )
+                            ).
+
+      order_category_filter = VALUE #( FOR fixed_value IN fixed_values
+                              WHERE ( zname = cns_order_category_filter )
+                              sign = fixed_value-zsign
+                              option = fixed_value-zopti
+                              ( low = fixed_value-zlow )
+                              ).
+
+      SELECT *
+      FROM setleaf
+      WHERE setclass IN @setclass_filter
+      AND setname IN @setname_filter
+      INTO TABLE @DATA(account_values).
+
+      IF sy-subrc EQ 0.
+
+        account_filter = VALUE #( FOR account_value IN account_values
+                          sign   = account_value-valsign
+                          option = account_value-valoption
+                          ( low = account_value-valfrom
+                          high = account_value-valto )
+                          ).
+
+      ENDIF.
+
+    ENDIF.
+
+  ENDMETHOD.
+
+ENDCLASS.
