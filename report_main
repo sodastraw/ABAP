@@ -1,0 +1,54 @@
+REPORT zerco041 MESSAGE-ID zco01.
+
+INCLUDE zenco041_top.
+INCLUDE zenco041_sel.
+INCLUDE zenco041_mdl.
+INCLUDE zenco041_ctl.
+INCLUDE zenco041_evh.
+INCLUDE zenco041_alv.
+
+INITIALIZATION.
+  FREE controller.
+  controller = NEW lcl_control( ).
+
+AT SELECTION-SCREEN.
+  controller->check_authorization( p_bukrs ).
+
+START-OF-SELECTION.
+
+  TRY.
+      controller->get_model( model_class ).
+    CATCH cx_method_not_implemented INTO DATA(control_method_error).
+      MESSAGE |{ control_method_error->get_text( ) }| TYPE message_type-error.
+  ENDTRY.
+
+  TRY.
+      controller->model->distribute_scrap_consumption( fiscal_year  = p_gajhr
+                                                       period       = p_poper
+                                                       company      = p_bukrs
+                                                       plants       = s_werks[]
+                                                       posting_date = p_budat
+                                                       program_id   = sy-repid ).
+
+    CATCH cx_method_not_implemented INTO DATA(model_method_error).
+      MESSAGE |{ model_method_error->get_text( ) }| TYPE message_type-error.
+  ENDTRY.
+
+END-OF-SELECTION.
+
+  IF controller->model->get_scrap_consumption_table( ) IS NOT INITIAL.
+
+    TRY.
+        controller->get_alv( alv_class ).
+      CATCH cx_method_not_implemented INTO DATA(control_alv_error).
+        MESSAGE |{ control_alv_error->get_text( ) }| TYPE message_type-error.
+    ENDTRY.
+*
+    DATA(output_table) = controller->model->get_scrap_consumption_table( ).
+    controller->alv->display_alv( CHANGING output_table = output_table ).
+
+  ELSE.
+
+    MESSAGE s071 DISPLAY LIKE message_type-error.
+
+  ENDIF.
