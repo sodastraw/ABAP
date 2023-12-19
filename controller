@@ -1,0 +1,87 @@
+*&---------------------------------------------------------------------*
+*& Include          ZENCO041_CTL
+*&---------------------------------------------------------------------*
+CLASS lcl_control DEFINITION.
+
+  PUBLIC SECTION.
+    DATA model TYPE REF TO lcl_scrap_consumption.
+    DATA alv TYPE REF TO lcl_alv .
+
+
+    METHODS get_model
+      IMPORTING
+        !name TYPE char30 .
+
+    METHODS get_alv
+      IMPORTING
+        !name TYPE char30 .
+
+    METHODS check_authorization IMPORTING company TYPE bukrs.
+
+  PROTECTED SECTION.
+
+  PRIVATE SECTION.
+    CONSTANTS:
+      cns_display TYPE activ_auth VALUE '03',
+
+      BEGIN OF message_type,
+        error   TYPE c   VALUE 'E',
+        success TYPE c   VALUE 'S',
+        info    TYPE c   VALUE 'I',
+      END OF message_type.
+
+
+ENDCLASS.
+
+
+CLASS lcl_control IMPLEMENTATION.
+
+  METHOD get_model .
+
+    DATA: object TYPE REF TO object.
+
+    TRY.
+        CREATE OBJECT object TYPE (name).
+      CATCH cx_sy_create_object_error INTO DATA(object_error).
+        MESSAGE |{ object_error->get_text( ) }| TYPE message_type-error.
+    ENDTRY.
+
+    TRY.
+        model ?= object.
+      CATCH cx_sy_move_cast_error INTO DATA(casting_error).
+        MESSAGE |{ casting_error->get_text( ) }| TYPE message_type-error.
+    ENDTRY.
+
+  ENDMETHOD.
+
+  METHOD get_alv .
+
+    DATA: object TYPE REF TO object.
+
+    TRY.
+        CREATE OBJECT object TYPE (name).
+      CATCH cx_sy_create_object_error INTO DATA(object_error).
+        MESSAGE |{ object_error->get_text( ) }| TYPE message_type-error.
+    ENDTRY.
+
+    TRY.
+        alv ?= object.
+      CATCH cx_sy_move_cast_error INTO DATA(casting_error).
+        MESSAGE |{ casting_error->get_text( ) }| TYPE message_type-error.
+    ENDTRY.
+
+  ENDMETHOD.
+
+  METHOD check_authorization.
+
+    AUTHORITY-CHECK OBJECT 'F_BKPF_BUK'
+      ID 'BUKRS' FIELD company
+      ID 'ACTVT' FIELD '01'.
+    IF sy-subrc NE 0.
+      MESSAGE e266 with company DISPLAY LIKE message_type-success.
+    ENDIF.
+
+
+  ENDMETHOD.
+
+ENDCLASS.
