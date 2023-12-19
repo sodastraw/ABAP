@@ -1,0 +1,59 @@
+*&---------------------------------------------------------------------*
+*& Include          ZENCO041_EVH
+*&---------------------------------------------------------------------*
+CLASS lcl_event_handler DEFINITION.
+*
+  PUBLIC SECTION.
+
+    METHODS:
+      on_click FOR EVENT added_function OF cl_salv_events.
+
+  PRIVATE SECTION.
+
+    CONSTANTS save TYPE sy-ucomm VALUE '&SVE'.
+    DATA alv  TYPE REF TO cl_salv_table.
+
+    METHODS display_popup.
+*
+ENDCLASS.
+
+CLASS lcl_event_handler IMPLEMENTATION.
+
+
+  METHOD on_click.
+    CASE sy-ucomm.
+      WHEN save.
+        controller->model->post_distribution( ).
+        display_popup( ).
+      WHEN OTHERS.
+
+    ENDCASE.
+  ENDMETHOD.                    "on_click
+
+  METHOD display_popup.
+        DATA(popup) = controller->model->get_popup_table( ).
+
+        TRY.
+            cl_salv_table=>factory(
+              IMPORTING
+                r_salv_table = alv
+              CHANGING
+                t_table      = popup ).
+
+          CATCH cx_salv_msg.
+        ENDTRY.
+
+        IF alv IS BOUND.
+
+          alv->set_screen_popup(
+            start_column = 5
+            end_column  = 50
+            start_line  = 5
+            end_line    = 10 ).
+
+          alv->display( ).
+
+        ENDIF.
+  ENDMETHOD.
+
+ENDCLASS.
