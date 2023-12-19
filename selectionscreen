@@ -1,0 +1,12 @@
+SELECTION-SCREEN BEGIN OF BLOCK b1 with FRAME TITLE text-000.
+
+PARAMETERS:
+  p_gajhr TYPE acdoca-gjahr OBLIGATORY,
+  p_poper TYPE acdoca-poper OBLIGATORY,
+  p_bukrs TYPE acdoca-rbukrs OBLIGATORY.
+SELECT-OPTIONS:
+  s_werks FOR plant OBLIGATORY.
+PARAMETERS:
+  p_budat TYPE acdoca-budat OBLIGATORY.
+
+SELECTION-SCREEN END OF BLOCK b1.
