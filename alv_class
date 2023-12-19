@@ -1,0 +1,257 @@
+*&---------------------------------------------------------------------*
+*& Include          ZENCO041_ALV
+*&---------------------------------------------------------------------*
+
+CLASS lcl_alv DEFINITION.
+
+  PUBLIC SECTION.
+    METHODS display_alv CHANGING output_table TYPE ANY TABLE.
+    METHODS get_alv_instance RETURNING VALUE(alv_instance) TYPE REF TO cl_salv_table.
+
+  PROTECTED SECTION.
+
+  PRIVATE SECTION.
+
+    CONSTANTS:
+      cns_alv_field      TYPE ztca_varv-zname VALUE 'ALV_FIELDS',
+      cns_alv_curr_field TYPE ztca_varv-zname VALUE 'ALV_CURRENCY_FIELD',
+      cns_alv_total      TYPE ztca_varv-zname VALUE 'ALV_TOTAL',
+      cns_alv_exception  TYPE ztca_varv-zname VALUE 'ALV_EXCEPTION',
+      cns_alv_icon       TYPE ztca_varv-zname VALUE 'ALV_ICON',
+      cns_pf_status      TYPE sypfkey VALUE 'ZSTANDARD',
+
+      BEGIN OF message_type,
+        error   TYPE c   VALUE 'E',
+        success TYPE c   VALUE 'S',
+        info    TYPE c   VALUE 'I',
+      END OF message_type.
+
+    DATA alv TYPE REF TO cl_salv_table.
+    DATA output_reference TYPE REF TO data.
+    DATA cx_salv_msg       TYPE REF TO cx_salv_msg.
+    DATA functions TYPE REF TO cl_salv_functions.
+    DATA layout    TYPE REF TO cl_salv_layout.
+    DATA key       TYPE salv_s_layout_key.
+    DATA columns   TYPE REF TO cl_salv_columns_table.
+    DATA column    TYPE REF TO cl_salv_column_table.
+    DATA cx_salv_not_found TYPE REF TO cx_salv_not_found.
+    DATA fixed_values TYPE STANDARD TABLE OF ztca_varv.
+    DATA label_long    TYPE scrtext_l.
+    DATA label_medium   TYPE scrtext_m.
+    DATA label_short   TYPE scrtext_s.
+    DATA display   TYPE REF TO cl_salv_display_settings.
+    DATA events TYPE REF TO cl_salv_events_table.
+    DATA event_handler TYPE REF TO lcl_event_handler.
+    DATA aggregations TYPE REF TO cl_salv_aggregations.
+
+
+
+    METHODS enable_functions.
+    METHODS enable_layout_save.
+    METHODS enable_columns_optimization.
+*    METHODS add_exception_to_columns.
+    METHODS process_column_settings IMPORTING output_table TYPE ANY TABLE.
+    METHODS read_fixed_values.
+    METHODS add_display_pattern.
+    METHODS add_pf_status.
+    METHODS prepare_event_handler.
+    METHODS add_aggregation.
+
+ENDCLASS.
+
+CLASS lcl_alv IMPLEMENTATION.
+
+  METHOD get_alv_instance.
+
+    alv_instance = alv.
+
+  ENDMETHOD.
+
+  METHOD display_alv.
+
+    FIELD-SYMBOLS: <output_tab> TYPE ANY TABLE.
+
+    read_fixed_values( ).
+
+    GET REFERENCE OF output_table INTO output_reference.
+    ASSIGN output_reference->* TO <output_tab>.
+
+    TRY.
+        cl_salv_table=>factory( IMPORTING r_salv_table = alv
+                                CHANGING  t_table      = output_table ).
+
+      CATCH cx_salv_msg INTO cx_salv_msg.
+        DATA(message) = cx_salv_msg->get_text( ).
+        MESSAGE message TYPE message_type-info DISPLAY LIKE message_type-error.
+    ENDTRY.
+
+    enable_functions( ).
+    enable_layout_save( ).
+    add_display_pattern( ).
+    enable_columns_optimization( ).
+    process_column_settings( output_table ).
+    add_aggregation( ).
+    add_pf_status( ).
+    prepare_event_handler( ).
+
+*    PF status goes here
+
+
+    alv->display( ).
+
+  ENDMETHOD.
+
+  METHOD add_aggregation.
+
+    aggregations = alv->get_aggregations( ).
+
+*// 2.Specify the column name for totals
+
+    LOOP AT fixed_values INTO DATA(fixed_values) WHERE zname = cns_alv_total.
+
+      TRY.
+          aggregations->add_aggregation(
+               columnname  = CONV lvc_fname( fixed_values-zlow )
+               aggregation = if_salv_c_aggregation=>total ).
+
+        CATCH cx_salv_data_error .
+        CATCH cx_salv_not_found .
+        CATCH cx_salv_existing .
+      ENDTRY.
+
+
+    ENDLOOP.
+
+
+  ENDMETHOD.
+
+
+
+  METHOD enable_functions.
+    functions  = alv->get_functions( ).
+    functions->set_all( abap_true ).
+  ENDMETHOD.
+
+  METHOD enable_layout_save.
+
+    layout     = alv->get_layout( ).
+    layout->set_save_restriction( if_salv_c_layout=>restrict_user_dependant ).
+    layout->set_default( abap_true ).
+    key-report = sy-repid.
+    layout->set_key( key ).
+
+  ENDMETHOD .
+
+
+  METHOD enable_columns_optimization.
+
+    columns = alv->get_columns( ).
+    columns->set_optimize( abap_true ).
+    columns->set_key_fixation( abap_true ).
+
+  ENDMETHOD .
+
+
+  METHOD process_column_settings.
+    FIELD-SYMBOLS: <output_tab> TYPE ANY TABLE.
+
+    GET REFERENCE OF output_table INTO output_reference.
+    ASSIGN output_reference->* TO <output_tab>.
+
+    LOOP AT <output_tab> ASSIGNING FIELD-SYMBOL(<output>). " generic type cannot use index here just loop
+      EXIT.
+    ENDLOOP.
+
+    LOOP AT CAST cl_abap_structdescr( cl_abap_typedescr=>describe_by_data( <output> ) )->components
+         INTO DATA(ls_components).
+
+      DATA(column_name) = ls_components-name .
+      TRY.
+          column ?= columns->get_column( column_name ).
+
+        CATCH cx_salv_not_found INTO cx_salv_not_found.
+          DATA(message) = cx_salv_not_found->get_text( ).
+          MESSAGE message TYPE message_type-info DISPLAY LIKE message_type-error.
+      ENDTRY.
+
+      READ TABLE fixed_values WITH KEY zname = cns_alv_field
+                                       zlow = ls_components-name INTO DATA(fixed_value).
+      IF sy-subrc EQ 0.
+
+        label_long   = fixed_value-zdesc.
+        label_medium = fixed_value-zdesc.
+        label_short  = fixed_value-zdesc.
+
+        column->set_long_text( label_long ).
+        column->set_medium_text( label_medium ).
+        column->set_short_text( label_short ).
+
+        CLEAR fixed_value.
+        READ TABLE fixed_values WITH KEY zname = cns_alv_curr_field
+                                         zlow = ls_components-name INTO fixed_value.
+
+        IF sy-subrc EQ 0.
+          column->set_currency_column( CONV lvc_cfname( fixed_value-zdesc )  ).
+        ENDIF.
+
+
+      ELSE.
+        column->set_technical( abap_true ). " hide field not in fixed value.
+      ENDIF.
+
+*     if there is a special property for a column create method and call here
+*     1. set icon column
+      CLEAR fixed_value.
+      READ TABLE fixed_values WITH KEY zname = cns_alv_icon
+                                       zlow = ls_components-name INTO fixed_value.
+      IF sy-subrc EQ 0.
+        column->set_icon( if_salv_c_bool_sap=>true ).
+      ENDIF.
+
+      CLEAR: label_long,
+             label_medium,
+             label_short,
+             fixed_value.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD read_fixed_values.
+
+    SELECT *
+      FROM ztca_varv
+     WHERE zprog EQ @sy-repid
+       AND zname IN ( @cns_alv_field,
+                      @cns_alv_curr_field,
+                      @cns_alv_total,
+                      @cns_alv_icon )
+      INTO TABLE @fixed_values.
+
+  ENDMETHOD.
+
+  METHOD add_display_pattern.
+
+    display = alv->get_display_settings( ).
+    display->set_striped_pattern( cl_salv_display_settings=>true ).
+
+  ENDMETHOD .
+
+
+  METHOD add_pf_status.
+*    SET PF-STATUS cns_pf_status.
+    alv->set_screen_status(
+       pfstatus      =  cns_pf_status
+       report       = sy-repid
+       set_functions = alv->c_functions_all ).
+  ENDMETHOD.
+
+  METHOD prepare_event_handler.
+
+    events = alv->get_event( ).
+    event_handler = NEW lcl_event_handler( ).
+    SET HANDLER event_handler->on_click FOR events.
+
+  ENDMETHOD.
+
+ENDCLASS.
