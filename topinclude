@@ -1,0 +1,20 @@
+*&---------------------------------------------------------------------*
+*& Include          ZENCO041_TOP
+*&---------------------------------------------------------------------*
+CLASS lcl_alv DEFINITION DEFERRED.
+CLASS lcl_event_handler DEFINITION DEFERRED.
+CLASS lcl_control DEFINITION DEFERRED.
+
+CONSTANTS:
+  model_class TYPE char30 VALUE 'LCL_SCRAP_CONSUMPTION',
+  alv_class   TYPE char30 VALUE 'LCL_ALV',
+
+  BEGIN OF message_type,
+    error   TYPE c   VALUE 'E',
+    success TYPE c   VALUE 'S',
+  END OF message_type.
+
+DATA plant TYPE acdoca-werks.
+
+DATA controller TYPE REF TO lcl_control. " to make it easier when handling ALV events.
+DATA alv TYPE REF TO lcl_alv.
