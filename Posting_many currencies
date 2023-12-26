@@ -1,0 +1,196 @@
+  METHOD post_distribution.
+
+    DATA obj_type TYPE  bapiache09-obj_type.
+    DATA obj_key  TYPE  bapiache09-obj_key.
+    DATA obj_sys  TYPE  bapiache09-obj_sys.
+
+
+    DATA lv_item TYPE i.
+    DATA lv_currency_count TYPE i.
+    DATA lv_count TYPE i.
+    REFRESH popup.
+
+    DATA(documentheader) =  VALUE bapiache09( doc_type   = cns_doctype_scrap_allocation
+                                              comp_code  = company
+                                              doc_date   = posting_date
+                                              pstng_date = posting_date
+                                              header_txt = cns_header_text
+                                              username = sy-uname ).
+
+    LOOP AT scrap_consumptions ASSIGNING FIELD-SYMBOL(<scrap_consumption>).
+      lv_count += 1.
+      lv_item += 1.
+
+      IF <scrap_consumption>-hsl0l GT 0.
+        DATA(gl_account) = VALUE racct( fixed_values[ zname = cns_account_filter ]-zlow DEFAULT cns_default_account ).
+        DATA(order) = <scrap_consumption>-aufnr.
+      ELSE.
+        gl_account = <scrap_consumption>-racct.
+        DATA(cost_center) = <scrap_consumption>-rcntr.
+      ENDIF.
+
+*      DATA(amount) = <scrap_consumption>-hsl0l.
+
+      accountgl = VALUE tt_accountgl( BASE accountgl
+                  ( itemno_acc = lv_item
+                    gl_account = gl_account
+                    orderid    = order
+                    costcenter = cost_center
+                    item_text  = <scrap_consumption>-matnr1
+                    material   = <scrap_consumption>-matnr2
+                    pstng_date = posting_date ) ).
+
+
+      LOOP AT currency_types INTO DATA(currency_type).
+
+        lv_currency_count += 1.
+
+        CASE currency_type-low.
+
+          WHEN cns_currency_type-company.
+
+            DATA(currency) = <scrap_consumption>-rhcur.
+            DATA(amount) = <scrap_consumption>-hsl0l.
+
+          WHEN cns_currency_type-group.
+
+            currency =  <scrap_consumption>-rkcur.
+            amount = <scrap_consumption>-ksl0l.
+
+          WHEN cns_currency_type-valuation.
+
+            currency = <scrap_consumption>-rkcur.
+            amount = <scrap_consumption>-kslgr.
+
+          WHEN OTHERS.
+        ENDCASE.
+
+
+        currencyamount = VALUE tt_currencyamount( BASE currencyamount
+                         ( itemno_acc = lv_currency_count
+                           curr_type  = CONV curtp( currency_type-low )
+                           currency   = <scrap_consumption>-rhcur
+                           amt_doccur = amount
+                           "exch_rate  = <scrap_consumption>-hsl0l
+                                      "/ <scrap_consumption>-ksl0l
+                                      ) ).
+
+      ENDLOOP.
+
+      CLEAR:
+        gl_account,
+        order,
+        cost_center.
+
+      lv_item += 1.
+
+      IF <scrap_consumption>-hsl0l GT 0.
+        gl_account = <scrap_consumption>-racct.
+        cost_center = <scrap_consumption>-rcntr.
+        CLEAR order.
+      ELSE.
+        gl_account = VALUE racct( fixed_values[ zname = cns_account_filter ]-zlow DEFAULT cns_default_account ).
+        CLEAR cost_center.
+        order = <scrap_consumption>-aufnr.
+      ENDIF.
+
+
+
+      accountgl = VALUE tt_accountgl( BASE accountgl
+                  ( itemno_acc = lv_item
+                    gl_account = gl_account
+                    orderid    = order
+                    costcenter = cost_center
+                    item_text  = <scrap_consumption>-matnr1
+                    material   = <scrap_consumption>-matnr2
+                    pstng_date = posting_date ) ).
+
+      LOOP AT currency_types INTO currency_type.
+
+        lv_currency_count += 1.
+
+        CASE currency_type-low.
+          WHEN cns_currency_type-company.
+            currency = <scrap_consumption>-rhcur.
+            amount = <scrap_consumption>-hsl0l.
+          WHEN cns_currency_type-group.
+            currency =  <scrap_consumption>-rkcur.
+            amount = <scrap_consumption>-ksl0l.
+          WHEN cns_currency_type-valuation.
+            currency = <scrap_consumption>-rkcur.
+            amount = <scrap_consumption>-kslgr.
+          WHEN OTHERS.
+        ENDCASE.
+
+        amount *= -1. "to balance posting
+
+        currencyamount = VALUE tt_currencyamount( BASE currencyamount
+                         ( itemno_acc = lv_currency_count
+                           currency   = <scrap_consumption>-rhcur
+                           amt_doccur = amount
+                           "exch_rate  = <scrap_consumption>-hsl0l
+                                      "/ <scrap_consumption>-ksl0l
+                                      ) ).
+
+      ENDLOOP.
+*
+*      DATA(currency_rate) = zcl_co_currency_rate=>get_instance( ).
+*      currency_rate->set_lc2_rate( <scrap_consumption>-hsl0l / <scrap_consumption>-ksl0l ).
+
+      CALL FUNCTION 'BAPI_ACC_DOCUMENT_POST'
+        EXPORTING
+          documentheader = documentheader
+        IMPORTING
+          obj_type       = obj_type
+          obj_key        = obj_key
+          obj_sys        = obj_sys
+        TABLES
+          accountgl      = accountgl
+          currencyamount = currencyamount
+          return         = return_messages.
+
+      READ TABLE return_messages WITH KEY type = cns_message_type-error INTO return_message.
+      IF sy-subrc NE 0.
+
+        CLEAR return_message.
+        CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+          IMPORTING
+            return = return_message.
+
+        APPEND INITIAL LINE TO popup ASSIGNING FIELD-SYMBOL(<popup>).
+        <popup>-item = lv_count.
+        <popup>-aufnr = <scrap_consumption>-aufnr.
+        <popup>-status = |Document { obj_key+0(10) } created|.
+
+      ELSE.
+
+        APPEND INITIAL LINE TO popup ASSIGNING <popup>.
+        <popup>-item = lv_count.
+        <popup>-aufnr = <scrap_consumption>-aufnr.
+        <popup>-status = return_message-message.
+
+        CLEAR return_message.
+        CALL FUNCTION 'BAPI_TRANSACTION_ROLLBACK'
+          IMPORTING
+            return = return_message.
+
+
+      ENDIF.
+
+      CLEAR:
+        gl_account,
+        order,
+        cost_center,
+        return_message.
+
+      REFRESH:
+        accountgl,
+        currencyamount,
+        return_messages.
+
+      lv_item = 0.
+      lv_currency_count = 0.
+
+
+    ENDLOOP.
+  ENDMETHOD.
